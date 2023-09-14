@@ -203,23 +203,32 @@ def _calculate_migration_strategy(
         return None
     elif version_comparison == -1:
         direction = _MigrationDirection.FORWARD
+        selected_versions = filter(
+            lambda x: current_version.compare(x) == version_comparison,
+            available_versions
+        )
+
+        selected_versions = filter(
+            lambda x: (
+                target_version.compare(x) == -version_comparison or
+                target_version.compare(x) == 0
+            ),
+            selected_versions
+        )
     elif version_comparison == 1:
         direction = _MigrationDirection.BACKWARD
+        selected_versions = filter(
+            lambda x: current_version.compare(x) == version_comparison or
+            current_version.compare(x) == 0,
+            available_versions
+        )
+
+        selected_versions = filter(
+            lambda x: target_version.compare(x) == -version_comparison,
+            selected_versions
+        )
     else:
         raise RuntimeError("Unexpected version comparison result")
-
-    selected_versions = filter(
-        lambda x: current_version.compare(x) == version_comparison,
-        available_versions
-    )
-
-    selected_versions = filter(
-        lambda x: (
-            target_version.compare(x) == -version_comparison or
-            target_version.compare(x) == 0
-        ),
-        selected_versions
-    )
 
     sorted_versions = sorted(
         selected_versions,

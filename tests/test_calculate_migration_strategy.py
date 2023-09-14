@@ -45,6 +45,33 @@ from semver import Version
             "0.0.1",
             ["0.0.1"],
             None
+        ),
+        (
+            "0.0.1",
+            "0.0.3",
+            ["0.0.1", "0.0.3", "0.0.4"],
+            (
+                migraine._MigrationDirection.FORWARD,
+                ["0.0.3"]
+            )
+        ),
+        (
+            "0.0.3",
+            "0.0.1",
+            ["0.0.1", "0.0.3", "0.0.4"],
+            (
+                migraine._MigrationDirection.BACKWARD,
+                ["0.0.3"]
+            )
+        ),
+        (
+            "0.0.5",
+            "0.0.2",
+            ["0.0.1", "0.0.3", "0.0.4", "0.0.5"],
+            (
+                migraine._MigrationDirection.BACKWARD,
+                ["0.0.5", "0.0.4", "0.0.3"]
+            )
         )
     ]
 )
