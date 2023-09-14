@@ -5,13 +5,13 @@ import inspect
 import sys
 import tomllib
 
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from enum import Enum
 from functools import cmp_to_key
 from pathlib import Path
 from types import ModuleType
-
-import semver
+from typing import Any, Iterable, Mapping, TypeVar
 
 from motor.motor_asyncio import (
     AsyncIOMotorClient,
@@ -20,14 +20,25 @@ from motor.motor_asyncio import (
     AsyncIOMotorDatabase
 )
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, field_serializer, field_validator
+from pydantic.fields import FieldInfo
+from semver import Version
 
 
-_PROJECT_METADATA_FILE_NAME = "pyproject.toml"
-_PROJECT_MIGRATION_DIRECTORY_NAME = "migrations"
+__all__ = [
+    "MigrationError",
+    "ProjectInspectionError",
+    "migrate"
+]
+
+
+_INITIAL_DATABASE_VERSION = Version.parse("0.0.0")
 
 _MIGRATION_DATABASE_NAME = "__migraine__"
 _MIGRATION_COLLECTION_NAME = "migrations"
+
+_PROJECT_METADATA_FILE_NAME = "pyproject.toml"
+_PROJECT_MIGRATION_DIRECTORY_NAME = "migrations"
 
 
 class _MigrationDirection(Enum):
@@ -52,23 +63,61 @@ class ProjectInspectionError(Exception):
 
 
 class _Migration(BaseModel):
-    version: str
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    version: Version
     application_datetime: datetime
 
+    @field_serializer("version")
+    def serialize_version(self, version: Version) -> str:
+        return str(version)
+
+    @field_validator("version")
     @classmethod
-    def of(cls, version: str) -> _Migration:
+    def validate_version(cls, version: str) -> Version:
+        return Version.parse(version)
+
+    @classmethod
+    def of(cls, version: Version) -> _Migration:
         return cls(version=version, application_datetime=datetime.now())
 
 
+_MigrationStrategy = tuple[_MigrationDirection, list[Version]]
+_VersionedPath = tuple[Version, Path]
+
+
+T = TypeVar("T")
+
+
+def _fst(items: Sequence[T]) -> T:
+    return items[0]
+
+
+def _snd(items: Sequence[T]) -> T:
+    return items[1]
+
+
+def _find(predicate: Callable[[T], bool], iterable: Iterable[T]) -> T:
+    return next(filter(predicate, iterable))
+
+
 def _get_calling_module() -> ModuleType:
-    frame = inspect.stack()[1]
-    module = inspect.getmodule(frame[0])
+    frame_info = _snd(inspect.stack())
+    module = inspect.getmodule(frame_info.frame)
+
+    if module is None:
+        raise ProjectInspectionError("Could not determine the calling module")
 
     return module
 
 
 def _load_module(name: str, file: Path) -> ModuleType:
     spec = importlib.util.spec_from_file_location(name, str(file))
+
+    if not spec or not spec.loader:
+        raise ProjectInspectionError(
+            f"Could not load migration file '{file}' as a module"
+        )
 
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
@@ -77,11 +126,9 @@ def _load_module(name: str, file: Path) -> ModuleType:
     return module
 
 
-def _to_versioned(file: Path) -> tuple[str, Path]:
-    version = file.stem
-
+def _to_versioned(file: Path) -> _VersionedPath:
     try:
-        semver.Version.parse(version)
+        version = Version.parse(file.stem)
     except ValueError:
         raise ProjectInspectionError(
             f"Migration file '{file}' is not named as a valid semantic"
@@ -91,17 +138,24 @@ def _to_versioned(file: Path) -> tuple[str, Path]:
     return version, file
 
 
-def _to_module_name(version: str) -> str:
-    version = version \
+def _to_module_name(version: Version) -> str:
+    serialized_version = str(version) \
         .replace(".", "_") \
         .replace("-", "_") \
         .replace("+", "_")
 
-    return _MIGRATION_MOFULE_NAME_FORMAT.format(version=version)
+    return _MIGRATION_MOFULE_NAME_FORMAT.format(version=serialized_version)
 
 
 def _find_project_metadata_file() -> Path:
-    directory = Path(_get_calling_module().__file__).parent
+    calling_module_file = _get_calling_module().__file__
+
+    if not calling_module_file:
+        raise ProjectInspectionError(
+            "Could not determine the calling module file"
+        )
+
+    directory = Path(calling_module_file).parent
 
     while directory != Path("/"):
         metadata_file = directory / _PROJECT_METADATA_FILE_NAME
@@ -116,27 +170,64 @@ def _find_project_metadata_file() -> Path:
     )
 
 
-def _load_project_metadata(file: Path) -> dict[str, str]:
-    with file.open(encoding="utf-8") as stream:
-        return tomllib.load(stream)
+def _load_project_metadata(file: Path) -> Mapping[str, Any]:
+    with file.open("r", encoding="utf-8") as stream:
+        return tomllib.load(stream) # type: ignore
 
 
-def _get_project_version(metadata: dict[str, str]) -> str:
-    return metadata["tool"]["poetry"]["version"]
+def _get_project_version(metadata: Mapping[str, Any]) -> Version:
+    return Version.parse(metadata["tool"]["poetry"]["version"])
 
 
 def _list_migration_script_files(
     project_root_directory: Path
-) -> list[tuple[str, Path]]:
+) -> list[tuple[Version, Path]]:
     migration_directory = (
         project_root_directory / _PROJECT_MIGRATION_DIRECTORY_NAME
     )
 
     candidate_files = migration_directory.glob("*.py")
     migration_files = map(_to_versioned, candidate_files)
-    compare = lambda a, b: semver.compare(a[0], b[0])
 
-    return sorted(migration_files, key=cmp_to_key(compare))
+    return list(migration_files)
+
+
+def _calculate_migration_strategy(
+    current_version: Version,
+    target_version: Version,
+    available_versions: Iterable[Version]
+) -> _MigrationStrategy | None:    
+    version_comparison = current_version.compare(target_version)
+
+    if version_comparison == 0:
+        return None
+    elif version_comparison == -1:
+        direction = _MigrationDirection.FORWARD
+    elif version_comparison == 1:
+        direction = _MigrationDirection.BACKWARD
+    else:
+        raise RuntimeError("Unexpected version comparison result")
+
+    selected_versions = filter(
+        lambda x: current_version.compare(x) == version_comparison,
+        available_versions
+    )
+
+    selected_versions = filter(
+        lambda x: (
+            target_version.compare(x) == -version_comparison or
+            target_version.compare(x) == 0
+        ),
+        selected_versions
+    )
+
+    sorted_versions = sorted(
+        selected_versions,
+        key=cmp_to_key(lambda a, b: a.compare(b)), # type: ignore[attr-defined, misc]
+        reverse=direction is _MigrationDirection.BACKWARD
+    )
+
+    return direction, sorted_versions
 
 
 def _database(client: AsyncIOMotorClient) -> AsyncIOMotorDatabase:
@@ -160,7 +251,7 @@ async def _find_last_migration(
     if len(migrations) == 0:
         return None
 
-    return _Migration(**migrations[0])
+    return _Migration(**_fst(migrations))
 
 
 async def _insert_migration(
@@ -174,14 +265,14 @@ async def _insert_migration(
 async def _insert_migration_of(
     session: AsyncIOMotorClientSession,
     collection: AsyncIOMotorCollection,
-    version: str
+    version: Version
 ) -> None:
     await _insert_migration(session, collection, _Migration.of(version))
 
 
 async def _run_migration_script(
     session: AsyncIOMotorClientSession,
-    version: str,
+    version: Version,
     file: Path,
     direction: _MigrationDirection
 ) -> None:
@@ -196,8 +287,11 @@ async def migrate(client: AsyncIOMotorClient) -> None:
     project_root_directory = project_metadata_file.parent
     project_metadata = _load_project_metadata(project_metadata_file)
     current_project_version = _get_project_version(project_metadata)
+    migration_script_files = _list_migration_script_files(
+        project_root_directory
+    )
 
-    async with client.start_session() as session:
+    async with await client.start_session() as session:
         async with session.start_transaction():
             database = _database(client)
             collection = _collection(database)
@@ -205,60 +299,36 @@ async def migrate(client: AsyncIOMotorClient) -> None:
             last_migration = await _find_last_migration(session, collection)
 
             if last_migration is None:
-                await _insert_migration_of(
-                    session,
-                    collection,
-                    current_project_version
-                )
-
-                return
-
-            current_database_verstion = last_migration.version
-            version_comparison = semver.compare(
-                current_project_version,
-                current_database_verstion
-            )
-
-            if version_comparison == 0:
-                return
-
-            migration_script_files = _list_migration_script_files(
-                project_root_directory
-            )
-
-            migration_direction = None
-
-            if version_comparison == -1:
-                migration_direction = _MigrationDirection.BACKWARD
-                migration_script_files = filter(
-                    lambda x: (
-                        semver.compare(current_project_version, x[0]) == -1
-                    ),
-                    migration_script_files
-                )
-
-                migration_script_files = map(
-                    lambda x: x[1], migration_script_files
-                )
-
-                migration_script_files = reversed(migration_script_files)
-            elif version_comparison == 1:
-                migration_direction = _MigrationDirection.FORWARD
-                migration_script_files = filter(
-                    lambda x: semver.compare(current_project_version, x[0]) == 1,
-                    migration_script_files
-                )
-
-                migration_script_files = map(lambda x: x[1], migration_script_files)
+                current_database_verstion = _INITIAL_DATABASE_VERSION
             else:
-                raise RuntimeError("Unexpected version comparison result")
+                current_database_verstion = last_migration.version
 
-            for file in migration_script_files:
-                await _run_migration_script(
-                    database,
-                    current_project_version,
-                    file,
-                    migration_direction
+            strategy = _calculate_migration_strategy(
+                current_database_verstion,
+                current_project_version,
+                map(_fst, migration_script_files) # type: ignore[arg-type]
+            )
+
+            if strategy is None:
+                return
+
+            direction, migration_versions = strategy
+
+            for version in migration_versions:
+                _, file = _find(
+                    lambda x: _fst(x) == version,
+                    migration_script_files
                 )
 
-            await _insert_migration_of(database, current_project_version)
+                await _run_migration_script(
+                    session,
+                    version,
+                    file,
+                    direction
+                )
+
+            await _insert_migration_of(
+                session,
+                collection,
+                current_project_version
+            )
