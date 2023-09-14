@@ -1,0 +1,18 @@
+[tool.poetry]
+name = "migraine"
+version = "0.1.0"
+description = "Implementation of automated semantic versioning-based Mongo migration flow for Python"
+authors = ["hacksparr0w <hacksparr0w@protonmail.com>"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.11"
+pydantic = "^2.3.0"
+motor = "^3.3.0"
+semver = "^3.0.1"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
