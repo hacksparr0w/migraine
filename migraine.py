@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import inspect
+import logging
 import sys
 import tomllib
 
@@ -21,8 +22,10 @@ from motor.motor_asyncio import (
 )
 
 from pydantic import BaseModel, ConfigDict, field_serializer, field_validator
-from pydantic.fields import FieldInfo
 from semver import Version
+
+
+logger = logging.getLogger(__name__)
 
 
 __all__ = [
@@ -74,7 +77,10 @@ class _Migration(BaseModel):
 
     @field_validator("version")
     @classmethod
-    def validate_version(cls, version: str) -> Version:
+    def validate_version(cls, version: str | Version) -> Version:
+        if isinstance(version, Version):
+            return version
+
         return Version.parse(version)
 
     @classmethod
@@ -171,8 +177,8 @@ def _find_project_metadata_file() -> Path:
 
 
 def _load_project_metadata(file: Path) -> Mapping[str, Any]:
-    with file.open("r", encoding="utf-8") as stream:
-        return tomllib.load(stream) # type: ignore
+    with file.open("rb") as stream:
+        return tomllib.load(stream)
 
 
 def _get_project_version(metadata: Mapping[str, Any]) -> Version:
@@ -319,9 +325,24 @@ async def migrate(client: AsyncIOMotorClient) -> None:
             )
 
             if strategy is None:
+                logger.info(
+                    "No version drift between project (%s) and database (%s) "
+                    "schema detected, everything is up to date",
+                    current_project_version,
+                    current_database_verstion
+                )
+
                 return
 
             direction, migration_versions = strategy
+
+            logger.info(
+                "Detected version drift between project (%s) and "
+                "database schema (%s), applying (%s) migration",
+                current_project_version,
+                current_database_verstion,
+                direction.value.lower()
+            )
 
             for version in migration_versions:
                 _, file = _find(
@@ -340,4 +361,9 @@ async def migrate(client: AsyncIOMotorClient) -> None:
                 session,
                 collection,
                 current_project_version
+            )
+
+            logger.info(
+                "Successfully applied %d migration scripts",
+                len(migration_versions)
             )
