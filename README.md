@@ -2,7 +2,15 @@
 
 Implementation of automated semantic versioning-based Mongo migration flow for Python
 
-## Example
+## Installation
+
+The recommended way to install migraine is with [Poetry][poetry] package manager:
+
+```sh
+poetry add git+https://github.com/hacksparr0w/migraine
+```
+
+## Usage
 
 Consider the following project structure:
 
@@ -83,3 +91,6 @@ async def __revert__(session: AsyncIOMotorClientSession) -> None:
 
 The `__apply__` function is called when the migration is applied, and the
 `__revert__` function is called when the migration is reverted.
+
+
+[poetry]: https://python-poetry.org/
