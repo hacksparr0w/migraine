@@ -109,7 +109,7 @@ def _find(predicate: Callable[[T], bool], iterable: Iterable[T]) -> T:
 
 def _get_calling_module() -> ModuleType:
     frame_info = _snd(inspect.stack())
-    print(frame_info)
+    print(inspect.stack())
     module = inspect.getmodule(frame_info.frame)
     print(module)
 
