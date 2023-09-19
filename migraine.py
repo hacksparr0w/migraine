@@ -109,14 +109,21 @@ def _find(predicate: Callable[[T], bool], iterable: Iterable[T]) -> T:
 
 def _get_calling_module() -> ModuleType:
     frame_info = _snd(inspect.stack())
-    print(inspect.stack())
-    module = inspect.getmodule(frame_info.frame)
-    print(module)
+    current_module = sys.modules[__name__]
 
-    if module is None:
-        raise ProjectInspectionError("Could not determine the calling module")
+    for frame_info in inspect.stack():
+        calling_module = inspect.getmodule(frame_info.frame)
 
-    return module
+        if calling_module is None:
+            continue
+
+        if calling_module is current_module:
+            continue
+
+        print(calling_module)
+        return calling_module
+
+    raise ProjectInspectionError("Could not determine the calling module")
 
 
 def _load_module(name: str, file: Path) -> ModuleType:
