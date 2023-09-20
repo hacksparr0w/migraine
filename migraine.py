@@ -78,6 +78,7 @@ class _Migration(BaseModel):
     @field_validator("version")
     @classmethod
     def validate_version(cls, version: str | Version) -> Version:
+        print("validator called")
         if isinstance(version, Version):
             return version
 
