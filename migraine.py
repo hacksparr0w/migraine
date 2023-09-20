@@ -15,10 +15,10 @@ from types import ModuleType
 from typing import Any, Iterable, Mapping, TypeVar
 
 from motor.motor_asyncio import (
-    AsyncIOMotorClient,
-    AsyncIOMotorClientSession,
-    AsyncIOMotorCollection,
-    AsyncIOMotorDatabase
+    AsyncIOMotorClient as MotorClient,
+    AsyncIOMotorClientSession as MotorClientSession,
+    AsyncIOMotorCollection as MotorCollection,
+    AsyncIOMotorDatabase as MotorDatabase
 )
 
 from pydantic import BaseModel, ConfigDict, field_serializer, field_validator
@@ -78,7 +78,6 @@ class _Migration(BaseModel):
     @field_validator("version", mode="before")
     @classmethod
     def validate_version(cls, version: str | Version) -> Version:
-        print("validator called")
         if isinstance(version, Version):
             return version
 
@@ -100,16 +99,11 @@ def _fst(items: Sequence[T]) -> T:
     return items[0]
 
 
-def _snd(items: Sequence[T]) -> T:
-    return items[1]
-
-
 def _find(predicate: Callable[[T], bool], iterable: Iterable[T]) -> T:
     return next(filter(predicate, iterable))
 
 
 def _get_calling_module() -> ModuleType:
-    frame_info = _snd(inspect.stack())
     current_module = sys.modules[__name__]
 
     for frame_info in inspect.stack():
@@ -121,7 +115,6 @@ def _get_calling_module() -> ModuleType:
         if calling_module is current_module:
             continue
 
-        print(calling_module)
         return calling_module
 
     raise ProjectInspectionError("Could not determine the calling module")
@@ -255,17 +248,17 @@ def _calculate_migration_strategy(
     return direction, sorted_versions
 
 
-def _database(client: AsyncIOMotorClient) -> AsyncIOMotorDatabase:
+def _database(client: MotorClient) -> MotorDatabase:
     return client.get_database(_MIGRATION_DATABASE_NAME)
 
 
-def _collection(db: AsyncIOMotorDatabase) -> AsyncIOMotorCollection:
+def _collection(db: MotorDatabase) -> MotorCollection:
     return db.get_collection(_MIGRATION_COLLECTION_NAME)
 
 
 async def _find_last_migration(
-    session: AsyncIOMotorClientSession,
-    collection: AsyncIOMotorCollection
+    session: MotorClientSession,
+    collection: MotorCollection
 ) -> _Migration | None:
     migrations = await collection \
         .find(session=session) \
@@ -276,30 +269,27 @@ async def _find_last_migration(
     if len(migrations) == 0:
         return None
 
-    print("asdfasdsadf")
-    print(_fst(migrations))
-
     return _Migration(**_fst(migrations))
 
 
 async def _insert_migration(
-    session: AsyncIOMotorClientSession,
-    collection: AsyncIOMotorCollection,
+    session: MotorClientSession,
+    collection: MotorCollection,
     migration: _Migration
 ) -> None:
     await collection.insert_one(migration.dict(), session=session)
 
 
 async def _insert_migration_of(
-    session: AsyncIOMotorClientSession,
-    collection: AsyncIOMotorCollection,
+    session: MotorClientSession,
+    collection: MotorCollection,
     version: Version
 ) -> None:
     await _insert_migration(session, collection, _Migration.of(version))
 
 
 async def _run_migration_script(
-    session: AsyncIOMotorClientSession,
+    session: MotorClientSession,
     version: Version,
     file: Path,
     direction: _MigrationDirection
@@ -310,7 +300,7 @@ async def _run_migration_script(
     await function(session)
 
 
-async def migrate(client: AsyncIOMotorClient) -> None:
+async def migrate(client: MotorClient) -> None:
     project_metadata_file = _find_project_metadata_file()
     project_root_directory = project_metadata_file.parent
     project_metadata = _load_project_metadata(project_metadata_file)
