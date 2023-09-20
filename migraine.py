@@ -275,6 +275,7 @@ async def _find_last_migration(
     if len(migrations) == 0:
         return None
 
+    print("asdfasdsadf")
     print(_fst(migrations))
 
     return _Migration(**_fst(migrations))
