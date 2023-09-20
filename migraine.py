@@ -68,6 +68,7 @@ class ProjectInspectionError(Exception):
 class _Migration(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
+    id: str =
     version: Version
     application_datetime: datetime
 
@@ -274,6 +275,8 @@ async def _find_last_migration(
 
     if len(migrations) == 0:
         return None
+
+    print(_fst(migrations))
 
     return _Migration(**_fst(migrations))
 
