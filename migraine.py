@@ -75,7 +75,7 @@ class _Migration(BaseModel):
     def serialize_version(self, version: Version) -> str:
         return str(version)
 
-    @field_validator("version", pre=True, always=True)
+    @field_validator("version", mode="before", always=True)
     @classmethod
     def validate_version(cls, version: str | Version) -> Version:
         print("validator called")
