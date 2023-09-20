@@ -68,7 +68,6 @@ class ProjectInspectionError(Exception):
 class _Migration(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    id: str =
     version: Version
     application_datetime: datetime
 
